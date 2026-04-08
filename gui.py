@@ -13,10 +13,12 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QFileDialog, QComboBox,
     QCheckBox, QProgressBar, QTextEdit, QGroupBox, QSpinBox,
     QMessageBox, QTabWidget, QTableWidget, QTableWidgetItem,
-    QSplitter, QFrame, QScrollArea, QSizePolicy
+    QSplitter, QFrame, QScrollArea, QSizePolicy, QSlider
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QPixmap, QImage, QPainter, QColor
+
+import cv2
 
 import numpy as np
 
@@ -488,8 +490,11 @@ class NeuroQuantGUI(QMainWindow):
         # Вкладка 4: Математика
         self.tabs.addTab(self.create_math_tab(), "Теорія")
 
-        # В��ладка 5: Довідка
+        # Вкладка 5: Довідка
         self.tabs.addTab(self.create_help_tab(), "Довідка")
+
+        # Вкладка 6: Порівняння (два екрани)
+        self.tabs.addTab(self.create_compare_tab(), "Порівняння")
 
     def create_encode_tab(self) -> QWidget:
         """Вкладка кодування."""
@@ -587,7 +592,7 @@ class NeuroQuantGUI(QMainWindow):
         return tab
 
     def create_analysis_tab(self) -> QWidget:
-        """Вкладка аналізу з графіками."""
+        """Вкладка аналізу з графіками та поясненнями."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
@@ -595,106 +600,199 @@ class NeuroQuantGUI(QMainWindow):
             layout.addWidget(QLabel("Matplotlib не встановлено. Графіки недоступні."))
             return tab
 
-        # Графік складності
+        # Графік складності з поясненням
+        complexity_group = QGroupBox("Аналіз складності кадрів")
+        complexity_layout = QVBoxLayout(complexity_group)
+
+        complexity_explain = QLabel(
+            "📊 <b>Синя лінія</b> — загальна складність кадру (0-1). "
+            "<b>Червоні пунктири</b> — зміни сцен. "
+            "Чим вище значення, тим більше деталей/руху в кадрі."
+        )
+        complexity_explain.setWordWrap(True)
+        complexity_layout.addWidget(complexity_explain)
+
         self.complexity_plot = PlotWidget()
-        layout.addWidget(QLabel("Складність кадрів:"))
-        layout.addWidget(self.complexity_plot)
+        complexity_layout.addWidget(self.complexity_plot)
+        layout.addWidget(complexity_group)
 
-        # Графік QP
+        # Графік QP з поясненням
+        qp_group = QGroupBox("QP план (адаптивний rate control)")
+        qp_layout = QVBoxLayout(qp_group)
+
+        qp_explain = QLabel(
+            "📉 <b>Фіолетова лінія</b> — QP для кожного кадру. "
+            "<b>Низький QP</b> = більше біт = краща якість (для складних сцен). "
+            "<b>Високий QP</b> = менше біт = економія (для простих сцен)."
+        )
+        qp_explain.setWordWrap(True)
+        qp_layout.addWidget(qp_explain)
+
         self.qp_plot = PlotWidget()
-        layout.addWidget(QLabel("QP план:"))
-        layout.addWidget(self.qp_plot)
+        qp_layout.addWidget(self.qp_plot)
+        layout.addWidget(qp_group)
 
-        # Статистика
+        # Статистика та висновки
+        results_layout = QHBoxLayout()
+
+        # Таблиця статистики
         stats_group = QGroupBox("Статистика")
-        stats_layout = QHBoxLayout(stats_group)
-
+        stats_layout_inner = QVBoxLayout(stats_group)
         self.stats_table = QTableWidget(6, 2)
         self.stats_table.setHorizontalHeaderLabels(["Параметр", "Значення"])
         self.stats_table.horizontalHeader().setStretchLastSection(True)
-        stats_layout.addWidget(self.stats_table)
+        stats_layout_inner.addWidget(self.stats_table)
+        results_layout.addWidget(stats_group)
 
-        layout.addWidget(stats_group)
+        # Висновки
+        conclusions_group = QGroupBox("Висновки")
+        conclusions_layout = QVBoxLayout(conclusions_group)
+        self.conclusions_label = QLabel(
+            "Після кодування тут з'являться автоматичні висновки:\n"
+            "• Характеристика контенту\n"
+            "• Ефективність адаптації QP\n"
+            "• Рекомендації"
+        )
+        self.conclusions_label.setWordWrap(True)
+        self.conclusions_label.setFont(QFont("Segoe UI", 10))
+        conclusions_layout.addWidget(self.conclusions_label)
+        results_layout.addWidget(conclusions_group)
+
+        layout.addLayout(results_layout)
 
         return tab
 
     def create_benchmark_tab(self) -> QWidget:
-        """Вкладка бенчмарку."""
+        """Вкладка бенчмарку з 4 екранами для порівняння."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        # Налаштування бенчмарку
-        settings_group = QGroupBox("Налаштування бенчмарку")
-        settings_layout = QVBoxLayout(settings_group)
+        # Налаштування
+        settings_group = QGroupBox("Налаштування")
+        settings_layout = QHBoxLayout(settings_group)
 
-        row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Відео:"))
+        settings_layout.addWidget(QLabel("Відео:"))
         self.bench_input = QLineEdit()
-        self.bench_input.setPlaceholderText("Оберіть тестове відео...")
-        row1.addWidget(self.bench_input)
+        self.bench_input.setPlaceholderText("Оберіть відео...")
+        settings_layout.addWidget(self.bench_input)
         bench_btn = QPushButton("...")
         bench_btn.setMaximumWidth(40)
         bench_btn.clicked.connect(lambda: self.browse_for_edit(self.bench_input))
-        row1.addWidget(bench_btn)
-        settings_layout.addLayout(row1)
+        settings_layout.addWidget(bench_btn)
 
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Методи:"))
-        self.method_h264 = QCheckBox("H.264")
-        self.method_h264.setChecked(True)
-        row2.addWidget(self.method_h264)
-        self.method_hevc = QCheckBox("HEVC")
-        self.method_hevc.setChecked(True)
-        row2.addWidget(self.method_hevc)
-        self.method_vvc = QCheckBox("VVC")
-        row2.addWidget(self.method_vvc)
-        self.method_nq = QCheckBox("NeuroQuant")
-        self.method_nq.setChecked(True)
-        row2.addWidget(self.method_nq)
-        row2.addStretch()
-        settings_layout.addLayout(row2)
+        settings_layout.addWidget(QLabel("Бітрейт:"))
+        self.bench_bitrate = QComboBox()
+        self.bench_bitrate.addItems(["300k", "600k", "1M", "2M"])
+        self.bench_bitrate.setCurrentText("600k")
+        settings_layout.addWidget(self.bench_bitrate)
 
-        row3 = QHBoxLayout()
-        row3.addWidget(QLabel("Бітрейти:"))
-        self.bench_bitrates = QLineEdit("300k, 600k, 1M, 2M")
-        row3.addWidget(self.bench_bitrates)
-        row3.addStretch()
-        settings_layout.addLayout(row3)
+        self.bench_btn = QPushButton("▶ Порівняти кодеки")
+        self.bench_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        self.bench_btn.clicked.connect(self.start_benchmark)
+        settings_layout.addWidget(self.bench_btn)
 
         layout.addWidget(settings_group)
 
         # Прогрес
         self.bench_progress = QProgressBar()
         layout.addWidget(self.bench_progress)
-
-        self.bench_status = QLabel("Готово")
+        self.bench_status = QLabel("Оберіть відео і натисніть 'Порівняти кодеки'")
         layout.addWidget(self.bench_status)
 
-        # Кнопка запуску
-        self.bench_btn = QPushButton("▶ Запустити бенчмарк")
-        self.bench_btn.setMinimumHeight(40)
-        self.bench_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
-        self.bench_btn.clicked.connect(self.start_benchmark)
-        layout.addWidget(self.bench_btn)
+        # 4 екрани (2x2)
+        screens_widget = QWidget()
+        screens_layout = QVBoxLayout(screens_widget)
 
-        # Результати
-        results_group = QGroupBox("Результати")
-        results_layout = QVBoxLayout(results_group)
+        # Верхній ряд: H.264 | HEVC
+        top_row = QHBoxLayout()
 
-        self.results_table = QTableWidget()
-        self.results_table.setColumnCount(7)
-        self.results_table.setHorizontalHeaderLabels([
-            "Метод", "Бітрейт", "Розмір (MB)", "PSNR (dB)", "SSIM", "Час (сек)", "Ефективність"
-        ])
-        results_layout.addWidget(self.results_table)
+        # H.264
+        h264_group = QGroupBox("H.264 (AVC)")
+        h264_layout = QVBoxLayout(h264_group)
+        self.bench_video_h264 = QLabel()
+        self.bench_video_h264.setMinimumSize(320, 180)
+        self.bench_video_h264.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bench_video_h264.setStyleSheet("background-color: #1a1a1a;")
+        h264_layout.addWidget(self.bench_video_h264)
+        self.bench_params_h264 = QLabel("—")
+        self.bench_params_h264.setFont(QFont("Consolas", 8))
+        h264_layout.addWidget(self.bench_params_h264)
+        top_row.addWidget(h264_group)
 
-        layout.addWidget(results_group)
+        # HEVC
+        hevc_group = QGroupBox("HEVC (H.265)")
+        hevc_layout = QVBoxLayout(hevc_group)
+        self.bench_video_hevc = QLabel()
+        self.bench_video_hevc.setMinimumSize(320, 180)
+        self.bench_video_hevc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bench_video_hevc.setStyleSheet("background-color: #1a1a1a;")
+        hevc_layout.addWidget(self.bench_video_hevc)
+        self.bench_params_hevc = QLabel("—")
+        self.bench_params_hevc.setFont(QFont("Consolas", 8))
+        hevc_layout.addWidget(self.bench_params_hevc)
+        top_row.addWidget(hevc_group)
 
-        # RD-крива
-        if MPL_OK:
-            self.rd_plot = PlotWidget()
-            layout.addWidget(QLabel("RD-крива:"))
-            layout.addWidget(self.rd_plot)
+        screens_layout.addLayout(top_row)
+
+        # Нижній ряд: VVC | NeuroQuant
+        bottom_row = QHBoxLayout()
+
+        # VVC
+        vvc_group = QGroupBox("VVC (H.266)")
+        vvc_layout = QVBoxLayout(vvc_group)
+        self.bench_video_vvc = QLabel()
+        self.bench_video_vvc.setMinimumSize(320, 180)
+        self.bench_video_vvc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bench_video_vvc.setStyleSheet("background-color: #1a1a1a;")
+        vvc_layout.addWidget(self.bench_video_vvc)
+        self.bench_params_vvc = QLabel("—")
+        self.bench_params_vvc.setFont(QFont("Consolas", 8))
+        vvc_layout.addWidget(self.bench_params_vvc)
+        bottom_row.addWidget(vvc_group)
+
+        # NeuroQuant
+        nq_group = QGroupBox("NeuroQuant (HEVC + R-λ)")
+        nq_layout = QVBoxLayout(nq_group)
+        self.bench_video_nq = QLabel()
+        self.bench_video_nq.setMinimumSize(320, 180)
+        self.bench_video_nq.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bench_video_nq.setStyleSheet("background-color: #1a1a1a;")
+        nq_layout.addWidget(self.bench_video_nq)
+        self.bench_params_nq = QLabel("—")
+        self.bench_params_nq.setFont(QFont("Consolas", 8))
+        nq_layout.addWidget(self.bench_params_nq)
+        bottom_row.addWidget(nq_group)
+
+        screens_layout.addLayout(bottom_row)
+        layout.addWidget(screens_widget)
+
+        # Слайдер
+        slider_row = QHBoxLayout()
+        self.bench_frame_label = QLabel("Кадр: 0 / 0")
+        slider_row.addWidget(self.bench_frame_label)
+        self.bench_slider = QSlider(Qt.Orientation.Horizontal)
+        self.bench_slider.setEnabled(False)
+        self.bench_slider.valueChanged.connect(self.on_bench_slider)
+        slider_row.addWidget(self.bench_slider)
+        self.bench_play_btn = QPushButton("Play")
+        self.bench_play_btn.setEnabled(False)
+        self.bench_play_btn.clicked.connect(self.toggle_bench_play)
+        slider_row.addWidget(self.bench_play_btn)
+        layout.addLayout(slider_row)
+
+        # Підсумок
+        self.bench_summary = QLabel("—")
+        self.bench_summary.setFont(QFont("Consolas", 10))
+        self.bench_summary.setStyleSheet("padding: 10px; background: #2a2a2a; color: #0f0;")
+        layout.addWidget(self.bench_summary)
+
+        # Дані для відтворення
+        self.bench_caps = {}
+        self.bench_paths = {}
+        self.bench_frame_count = 0
+        self.bench_timer = QTimer()
+        self.bench_timer.timeout.connect(self.bench_next_frame)
+        self.bench_playing = False
 
         return tab
 
@@ -863,6 +961,205 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
 
         return tab
 
+    def create_compare_tab(self) -> QWidget:
+        """Вкладка порівняння — два екрани поруч."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # Інфо
+        info_label = QLabel("Після кодування тут з'явиться порівняння оригіналу і результату")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_label.setStyleSheet("color: #888; padding: 20px;")
+        layout.addWidget(info_label)
+        self.compare_info_label = info_label
+
+        # Два екрани поруч
+        screens = QHBoxLayout()
+
+        # Лівий — оригінал
+        left_group = QGroupBox("ОРИГІНАЛ")
+        left_layout = QVBoxLayout(left_group)
+        self.left_video_label = QLabel()
+        self.left_video_label.setMinimumSize(480, 270)
+        self.left_video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.left_video_label.setStyleSheet("background-color: #1a1a1a;")
+        left_layout.addWidget(self.left_video_label)
+
+        self.left_params = QLabel("—")
+        self.left_params.setFont(QFont("Consolas", 9))
+        left_layout.addWidget(self.left_params)
+        screens.addWidget(left_group)
+
+        # Правий — стиснене
+        right_group = QGroupBox("СТИСНЕНЕ (NeuroQuant)")
+        right_layout = QVBoxLayout(right_group)
+        self.right_video_label = QLabel()
+        self.right_video_label.setMinimumSize(480, 270)
+        self.right_video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.right_video_label.setStyleSheet("background-color: #1a1a1a;")
+        right_layout.addWidget(self.right_video_label)
+
+        self.right_params = QLabel("—")
+        self.right_params.setFont(QFont("Consolas", 9))
+        right_layout.addWidget(self.right_params)
+        screens.addWidget(right_group)
+
+        layout.addLayout(screens)
+
+        # Слайдер
+        slider_row = QHBoxLayout()
+        self.compare_frame_label = QLabel("Кадр: 0 / 0")
+        slider_row.addWidget(self.compare_frame_label)
+
+        self.compare_slider = QSlider(Qt.Orientation.Horizontal)
+        self.compare_slider.setEnabled(False)
+        self.compare_slider.valueChanged.connect(self.on_compare_slider)
+        slider_row.addWidget(self.compare_slider)
+
+        self.compare_play_btn = QPushButton("Play")
+        self.compare_play_btn.setEnabled(False)
+        self.compare_play_btn.clicked.connect(self.toggle_compare_play)
+        slider_row.addWidget(self.compare_play_btn)
+
+        layout.addLayout(slider_row)
+
+        # Підсумок порівняння
+        summary_group = QGroupBox("Результат порівняння")
+        summary_layout = QVBoxLayout(summary_group)
+        self.compare_summary = QLabel("—")
+        self.compare_summary.setFont(QFont("Consolas", 11))
+        summary_layout.addWidget(self.compare_summary)
+        layout.addWidget(summary_group)
+
+        # Таймер для відтворення
+        self.compare_timer = QTimer()
+        self.compare_timer.timeout.connect(self.compare_next_frame)
+        self.compare_playing = False
+
+        # Відео дані
+        self.compare_original_path = None
+        self.compare_output_path = None
+        self.compare_cap_orig = None
+        self.compare_cap_comp = None
+        self.compare_frame_count = 0
+
+        return tab
+
+    def load_compare_videos(self, original_path: str, output_path: str):
+        """Завантажити відео для порівняння після кодування."""
+        self.compare_original_path = original_path
+        self.compare_output_path = output_path
+
+        # Відкриваємо відео
+        self.compare_cap_orig = cv2.VideoCapture(original_path)
+        self.compare_cap_comp = cv2.VideoCapture(output_path)
+
+        orig_info = get_video_info(original_path)
+        comp_info = get_video_info(output_path)
+
+        orig_size = Path(original_path).stat().st_size / (1024 * 1024)
+        comp_size = Path(output_path).stat().st_size / (1024 * 1024)
+
+        # Параметри
+        self.left_params.setText(
+            f"Файл: {Path(original_path).name}\n"
+            f"Роздільність: {orig_info['width']} x {orig_info['height']}\n"
+            f"FPS: {orig_info['fps']:.1f}\n"
+            f"Бітрейт: {format_bitrate(orig_info.get('bitrate', 0))}\n"
+            f"Розмір: {orig_size:.2f} MB"
+        )
+
+        self.right_params.setText(
+            f"Файл: {Path(output_path).name}\n"
+            f"Роздільність: {comp_info['width']} x {comp_info['height']}\n"
+            f"FPS: {comp_info['fps']:.1f}\n"
+            f"Бітрейт: {format_bitrate(comp_info.get('bitrate', 0))}\n"
+            f"Розмір: {comp_size:.2f} MB"
+        )
+
+        # Підсумок
+        ratio = orig_size / comp_size if comp_size > 0 else 0
+        savings = (1 - comp_size / orig_size) * 100 if orig_size > 0 else 0
+        orig_br = orig_info.get('bitrate', 0)
+        comp_br = comp_info.get('bitrate', 0)
+
+        self.compare_summary.setText(
+            f"Стиснення: {ratio:.1f}x   |   "
+            f"Економія: {savings:.1f}%   |   "
+            f"Бітрейт: {format_bitrate(orig_br)} → {format_bitrate(comp_br)}"
+        )
+
+        # Слайдер
+        self.compare_frame_count = min(
+            int(self.compare_cap_orig.get(cv2.CAP_PROP_FRAME_COUNT)),
+            int(self.compare_cap_comp.get(cv2.CAP_PROP_FRAME_COUNT))
+        )
+        self.compare_slider.setMaximum(self.compare_frame_count - 1)
+        self.compare_slider.setEnabled(True)
+        self.compare_play_btn.setEnabled(True)
+
+        self.compare_info_label.hide()
+
+        # Показати перший кадр
+        self.show_compare_frame(0)
+
+        # Переключитись на вкладку порівняння
+        self.tabs.setCurrentIndex(5)
+
+    def show_compare_frame(self, idx: int):
+        """Показати кадр на обох екранах."""
+        if self.compare_cap_orig and self.compare_cap_comp:
+            # Оригінал
+            self.compare_cap_orig.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret1, frame1 = self.compare_cap_orig.read()
+            if ret1:
+                self.display_frame_on_label(self.left_video_label, frame1)
+
+            # Стиснене
+            self.compare_cap_comp.set(cv2.CAP_PROP_POS_FRAMES, idx)
+            ret2, frame2 = self.compare_cap_comp.read()
+            if ret2:
+                self.display_frame_on_label(self.right_video_label, frame2)
+
+            self.compare_frame_label.setText(f"Кадр: {idx + 1} / {self.compare_frame_count}")
+
+    def display_frame_on_label(self, label: QLabel, frame):
+        """Відобразити кадр на QLabel."""
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = frame_rgb.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_image)
+        scaled = pixmap.scaled(
+            label.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        label.setPixmap(scaled)
+
+    def on_compare_slider(self, value: int):
+        self.show_compare_frame(value)
+
+    def toggle_compare_play(self):
+        if self.compare_playing:
+            self.compare_timer.stop()
+            self.compare_play_btn.setText("Play")
+            self.compare_playing = False
+        else:
+            fps = 25
+            if self.compare_cap_orig:
+                fps = self.compare_cap_orig.get(cv2.CAP_PROP_FPS) or 25
+            self.compare_timer.start(int(1000 / fps))
+            self.compare_play_btn.setText("Pause")
+            self.compare_playing = True
+
+    def compare_next_frame(self):
+        current = self.compare_slider.value()
+        if current < self.compare_slider.maximum():
+            self.compare_slider.setValue(current + 1)
+        else:
+            self.compare_slider.setValue(0)
+
     def check_system(self):
         ok, msg = check_ffmpeg()
         self.log_text.append(f"FFmpeg: {'OK' if ok else 'ПОМИЛКА'} - {msg[:50]}")
@@ -966,6 +1263,12 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
             self.last_stats = stats
             self.update_analysis_tab(stats)
 
+            # Завантажити порівняння
+            input_path = self.input_edit.text()
+            output_path = self.output_edit.text()
+            if input_path and output_path and Path(output_path).exists():
+                self.load_compare_videos(input_path, output_path)
+
         if ok:
             QMessageBox.information(self, "Готово", msg)
         else:
@@ -1002,6 +1305,57 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
             self.stats_table.setItem(i, 0, QTableWidgetItem(param))
             self.stats_table.setItem(i, 1, QTableWidgetItem(value))
 
+        # Генерація висновків
+        conclusions = self.generate_conclusions(stats)
+        self.conclusions_label.setText(conclusions)
+
+    def generate_conclusions(self, stats: dict) -> str:
+        """Генерація автоматичних висновків на основі аналізу."""
+        conclusions = []
+
+        # Аналіз складності
+        if 'complexity' in stats:
+            complexity = stats['complexity']
+            avg_c = np.mean(complexity)
+            std_c = np.std(complexity)
+
+            if avg_c < 0.3:
+                conclusions.append("• Контент: <b>простий</b> (статичні сцени, мало деталей)")
+            elif avg_c < 0.6:
+                conclusions.append("• Контент: <b>середньої складності</b> (помірний рух)")
+            else:
+                conclusions.append("• Контент: <b>складний</b> (багато руху, деталей)")
+
+            if std_c > 0.2:
+                conclusions.append("• Варіативність: <b>висока</b> — адаптивний QP дуже ефективний")
+            else:
+                conclusions.append("• Варіативність: <b>низька</b> — контент однорідний")
+
+        # Аналіз QP
+        qp_range = stats.get('qp_max', 0) - stats.get('qp_min', 0)
+        if qp_range > 15:
+            conclusions.append(f"• QP адаптація: <b>агресивна</b> (діапазон {qp_range})")
+        elif qp_range > 8:
+            conclusions.append(f"• QP адаптація: <b>помірна</b> (діапазон {qp_range})")
+        else:
+            conclusions.append(f"• QP адаптація: <b>мінімальна</b> (діапазон {qp_range})")
+
+        # Стиснення
+        ratio = stats.get('compression_ratio', 0)
+        if ratio > 10:
+            conclusions.append(f"• Стиснення: <b>дуже агресивне</b> ({ratio:.1f}x)")
+        elif ratio > 5:
+            conclusions.append(f"• Стиснення: <b>хороше</b> ({ratio:.1f}x)")
+        else:
+            conclusions.append(f"• Стиснення: <b>помірне</b> ({ratio:.1f}x)")
+
+        # Рекомендації
+        scene_cuts = len(stats.get('scene_cuts', []))
+        if scene_cuts > 10:
+            conclusions.append(f"• Рекомендація: багато змін сцен ({scene_cuts}) — підходить для адаптивного кодування")
+
+        return "\n".join(conclusions) if conclusions else "Немає даних для аналізу"
+
         # Переключитись на вкладку аналізу
         self.tabs.setCurrentIndex(1)
 
@@ -1011,25 +1365,17 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
             QMessageBox.warning(self, "Помилка", "Оберіть тестове відео")
             return
 
-        methods = []
-        if self.method_h264.isChecked(): methods.append('h264')
-        if self.method_hevc.isChecked(): methods.append('hevc')
-        if self.method_vvc.isChecked(): methods.append('vvc')
-        if self.method_nq.isChecked(): methods.append('nq')
-
-        if not methods:
-            QMessageBox.warning(self, "Помилка", "Оберіть хоча б один метод")
-            return
-
-        bitrates = [parse_bitrate(b.strip()) for b in self.bench_bitrates.text().split(',')]
-
-        output_dir = str(Path(inp).parent / "benchmark_results")
+        bitrate = parse_bitrate(self.bench_bitrate.currentText())
+        output_dir = Path(inp).parent / "benchmark_results"
+        output_dir.mkdir(exist_ok=True)
 
         self.bench_btn.setEnabled(False)
         self.bench_progress.setValue(0)
-        self.results_table.setRowCount(0)
+        self.bench_status.setText("Кодування 4 методами...")
 
-        self.benchmark_worker = BenchmarkWorker(inp, output_dir, bitrates, methods)
+        # Запускаємо кодування всіма методами
+        methods = ['h264', 'hevc', 'vvc', 'nq']
+        self.benchmark_worker = BenchmarkWorker(inp, str(output_dir), [bitrate], methods)
         self.benchmark_worker.progress.connect(lambda p, m: (
             self.bench_progress.setValue(p),
             self.bench_status.setText(m)
@@ -1044,26 +1390,118 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
 
         if ok and results:
             self.benchmark_results = results
-            self.update_benchmark_results(results)
+            self.load_benchmark_videos(results)
 
-    def update_benchmark_results(self, results: List[Dict]):
-        """Оновлення таблиці та графіків бенчмарку."""
-        self.results_table.setRowCount(len(results))
+    def load_benchmark_videos(self, results: List[Dict]):
+        """Завантажити відео для 4 екранів бенчмарку."""
+        # Закриваємо попередні
+        for cap in self.bench_caps.values():
+            if cap:
+                cap.release()
+        self.bench_caps = {}
+        self.bench_paths = {}
 
-        for i, r in enumerate(results):
-            self.results_table.setItem(i, 0, QTableWidgetItem(r['method'].upper()))
-            self.results_table.setItem(i, 1, QTableWidgetItem(format_bitrate(r['bitrate'])))
-            self.results_table.setItem(i, 2, QTableWidgetItem(f"{r['size_mb']:.2f}"))
-            self.results_table.setItem(i, 3, QTableWidgetItem(f"{r['psnr']:.2f}"))
-            self.results_table.setItem(i, 4, QTableWidgetItem(f"{r['ssim']:.4f}"))
-            self.results_table.setItem(i, 5, QTableWidgetItem(f"{r['encoding_time']:.1f}"))
+        # Знаходимо шляхи до відео
+        input_path = self.bench_input.text()
+        output_dir = Path(input_path).parent / "benchmark_results"
+        bitrate = parse_bitrate(self.bench_bitrate.currentText())
+        stem = Path(input_path).stem
 
-            # Ефективність = PSNR / bitrate
-            eff = r['psnr'] / (r['actual_bitrate'] / 1000) if r['actual_bitrate'] > 0 else 0
-            self.results_table.setItem(i, 6, QTableWidgetItem(f"{eff:.3f}"))
+        method_labels = {
+            'h264': (self.bench_video_h264, self.bench_params_h264),
+            'hevc': (self.bench_video_hevc, self.bench_params_hevc),
+            'vvc': (self.bench_video_vvc, self.bench_params_vvc),
+            'nq': (self.bench_video_nq, self.bench_params_nq),
+        }
 
-        if MPL_OK and hasattr(self, 'rd_plot'):
-            self.rd_plot.plot_rd_curve(results)
+        best_psnr = 0
+        best_method = ""
+        summary_parts = []
+
+        for r in results:
+            method = r['method']
+            if method not in method_labels:
+                continue
+
+            video_label, params_label = method_labels[method]
+            video_path = output_dir / f"{stem}_{method}_{bitrate}.mp4"
+
+            if video_path.exists():
+                self.bench_caps[method] = cv2.VideoCapture(str(video_path))
+                self.bench_paths[method] = str(video_path)
+
+                params_label.setText(
+                    f"Розмір: {r['size_mb']:.2f} MB\n"
+                    f"Бітрейт: {format_bitrate(r['actual_bitrate'])}\n"
+                    f"PSNR: {r['psnr']:.2f} dB\n"
+                    f"SSIM: {r['ssim']:.4f}"
+                )
+
+                if r['psnr'] > best_psnr:
+                    best_psnr = r['psnr']
+                    best_method = method.upper()
+
+                summary_parts.append(f"{method.upper()}: {r['psnr']:.1f}dB")
+            else:
+                params_label.setText("Не вдалося закодувати")
+
+        # Підсумок
+        if best_method:
+            self.bench_summary.setText(
+                f"Найкраща якість: {best_method} ({best_psnr:.2f} dB)  |  " +
+                "  |  ".join(summary_parts)
+            )
+
+        # Налаштування слайдера
+        if self.bench_caps:
+            first_cap = list(self.bench_caps.values())[0]
+            self.bench_frame_count = int(first_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.bench_slider.setMaximum(self.bench_frame_count - 1)
+            self.bench_slider.setEnabled(True)
+            self.bench_play_btn.setEnabled(True)
+            self.show_bench_frame(0)
+
+    def show_bench_frame(self, idx: int):
+        """Показати кадр на всіх 4 екранах."""
+        method_labels = {
+            'h264': self.bench_video_h264,
+            'hevc': self.bench_video_hevc,
+            'vvc': self.bench_video_vvc,
+            'nq': self.bench_video_nq,
+        }
+
+        for method, cap in self.bench_caps.items():
+            if cap and method in method_labels:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if ret:
+                    self.display_frame_on_label(method_labels[method], frame)
+
+        self.bench_frame_label.setText(f"Кадр: {idx + 1} / {self.bench_frame_count}")
+
+    def on_bench_slider(self, value: int):
+        self.show_bench_frame(value)
+
+    def toggle_bench_play(self):
+        if self.bench_playing:
+            self.bench_timer.stop()
+            self.bench_play_btn.setText("Play")
+            self.bench_playing = False
+        else:
+            fps = 25
+            if self.bench_caps:
+                first_cap = list(self.bench_caps.values())[0]
+                fps = first_cap.get(cv2.CAP_PROP_FPS) or 25
+            self.bench_timer.start(int(1000 / fps))
+            self.bench_play_btn.setText("Pause")
+            self.bench_playing = True
+
+    def bench_next_frame(self):
+        current = self.bench_slider.value()
+        if current < self.bench_slider.maximum():
+            self.bench_slider.setValue(current + 1)
+        else:
+            self.bench_slider.setValue(0)
 
 
 def apply_dark_theme(app):
