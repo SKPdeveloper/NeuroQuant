@@ -1,0 +1,37 @@
+# NeuroQuant - залежності
+# Python 3.11+
+
+# Обробка відео та зображень
+opencv-python>=4.8
+numpy>=1.24
+
+# Scene detection
+scenedetect[opencv]>=0.6
+
+# Deep Learning (Real-ESRGAN)
+torch>=2.1
+torchvision>=0.16
+huggingface_hub>=0.20
+basicsr>=1.4.2
+realesrgan>=0.3.0
+
+# FFmpeg wrapper
+ffmpeg-python>=0.2
+
+# Метрики якості
+scikit-image>=0.21
+
+# Статистика та інтерполяція
+scipy>=1.11
+pandas>=2.0
+
+# Візуалізація
+matplotlib>=3.7
+seaborn>=0.13
+
+# CLI
+click>=8.1
+rich>=13.0
+
+# Конфігурація
+pyyaml>=6.0

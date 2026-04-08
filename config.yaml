@@ -1,0 +1,75 @@
+# NeuroQuant - конфігурація за замовчуванням
+
+# Аналіз складності
+complexity:
+  # Ваги компонентів (сума = 1.0)
+  spatial_weight: 0.4      # α - просторова складність (Sobel)
+  temporal_weight: 0.5     # β - тимчасова складність (SAD)
+  cut_weight: 0.1          # γ - scene cuts
+
+  # PySceneDetect параметри
+  scene_threshold: 27.0    # Поріг ContentDetector
+
+  # Масштаб аналізу (для швидкості)
+  analysis_scale: 0.5      # 1/2 роздільної здатності
+
+# Rate Controller
+rate_control:
+  # Діапазон QP (розширений для гнучкості)
+  qp_min: 10
+  qp_max: 51
+
+  # Максимальне відхилення QP від базового
+  delta_max: 8
+
+  # Бонус якості для I-кадрів
+  i_frame_bonus: 4
+
+  # GOP структура
+  gop_seconds: 2.0         # Тривалість GOP у секундах
+
+# Кодування
+encoder:
+  # Кодек за замовчуванням
+  codec: libx265
+  preset: medium
+
+# SR постпроцесинг
+sr:
+  # Поріг активації (VMAF)
+  vmaf_threshold: 70
+
+  # Модель за замовчуванням
+  model: RealESRNet_x2plus
+
+  # Tile-based inference для економії VRAM
+  tile_size: 512
+  tile_pad: 10
+
+# Бенчмарк
+benchmark:
+  # Методи для порівняння
+  methods:
+    - h264
+    - hevc
+    - nq
+    - nq_sr
+
+  # Тестові бітрейти (bps)
+  bitrates:
+    - 150000
+    - 300000
+    - 600000
+    - 1200000
+    - 2500000
+
+# Метрики
+metrics:
+  # Кількість потоків для обчислення
+  n_threads: 4
+
+# Шляхи
+paths:
+  models_cache: ./models
+  results: ./results
+  temp: ./temp
