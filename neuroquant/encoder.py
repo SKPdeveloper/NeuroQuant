@@ -210,6 +210,16 @@ class FFmpegEncoder:
 
         return self._run_encode(cmd_pass2, output_path, video_info, show_progress)
 
+    def encode(
+        self,
+        input_path: str,
+        output_path: str,
+        bitrate: int,
+        show_progress: bool = True,
+    ) -> EncodingResult:
+        """Простий метод кодування з заданим бітрейтом."""
+        return self.encode_abr(input_path, output_path, bitrate, two_pass=True, show_progress=show_progress)
+
     def encode_abr(
         self,
         input_path: str,

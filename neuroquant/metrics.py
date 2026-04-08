@@ -430,3 +430,25 @@ def compute_rd_metrics(
         }
 
     return rd_metrics
+
+
+# Прості функції-обгортки для швидкого обчислення метрик
+def calculate_psnr(reference_path: str, distorted_path: str) -> float:
+    """Обчислює середній PSNR між двома відео."""
+    collector = MetricsCollector()
+    metrics = collector.compute_metrics(distorted_path, reference_path)
+    return metrics.psnr_mean
+
+
+def calculate_ssim(reference_path: str, distorted_path: str) -> float:
+    """Обчислює середній SSIM між двома відео."""
+    collector = MetricsCollector()
+    metrics = collector.compute_metrics(distorted_path, reference_path)
+    return metrics.ssim_mean
+
+
+def calculate_vmaf(reference_path: str, distorted_path: str) -> float:
+    """Обчислює середній VMAF між двома відео."""
+    collector = MetricsCollector()
+    metrics = collector.compute_metrics(distorted_path, reference_path)
+    return metrics.vmaf_mean
