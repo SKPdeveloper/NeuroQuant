@@ -268,6 +268,40 @@ class BenchmarkWorker(QThread):
                                 self.input_path, str(output_path), qp_plan,
                                 target_bitrate=bitrate, show_progress=False
                             )
+                        elif method == 'nq_sr':
+                            # NeuroQuant + Real-ESRGAN SR
+                            from neuroquant.analyzer import ComplexityAnalyzer
+                            from neuroquant.controller import RLambdaController
+                            from neuroquant.sr_processor import SRPostProcessor
+
+                            analyzer = ComplexityAnalyzer()
+                            complexity = analyzer.analyze(self.input_path, show_progress=False)
+
+                            video_info = get_video_info(self.input_path)
+                            controller = RLambdaController()
+                            qp_plan = controller.generate_qp_plan(
+                                complexity, bitrate, video_info['fps'],
+                                video_info['width'], video_info['height']
+                            )
+
+                            # Спочатку кодуємо
+                            temp_path = Path(self.output_dir) / f"temp_{Path(self.input_path).stem}_{bitrate}.mp4"
+                            encoder = FFmpegEncoder(codec=Codec.HEVC)
+                            result = encoder.encode_with_qp_plan(
+                                self.input_path, str(temp_path), qp_plan,
+                                target_bitrate=bitrate, show_progress=False
+                            )
+
+                            if result.success:
+                                # Застосовуємо SR
+                                sr_processor = SRPostProcessor(vmaf_threshold=70.0)
+                                sr_result = sr_processor.process_video(
+                                    str(temp_path), self.input_path, str(output_path),
+                                    show_progress=False
+                                )
+                                temp_path.unlink(missing_ok=True)
+                                if not sr_result.success:
+                                    result = sr_result
                         else:
                             continue
 
@@ -455,23 +489,31 @@ class NeuroQuantGUI(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("NeuroQuant - Інтелектуальне стиснення відео")
-        self.setMinimumSize(1000, 700)
+        self.setMinimumSize(1100, 800)
 
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
+        layout.setSpacing(8)
+        layout.setContentsMargins(12, 8, 12, 8)
 
         # Заголовок
         header = QHBoxLayout()
         title = QLabel("NeuroQuant")
-        title.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
-        title.setStyleSheet("color: #2196F3;")
+        title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        title.setStyleSheet("color: #333;")
         header.addWidget(title)
 
         subtitle = QLabel("R-λ Rate Control + Real-ESRGAN Super-Resolution")
-        subtitle.setStyleSheet("color: #666; padding-top: 10px;")
+        subtitle.setStyleSheet("color: #888; padding-top: 8px; font-size: 11px;")
         header.addWidget(subtitle)
         header.addStretch()
+
+        # Версія
+        version_label = QLabel("v1.0")
+        version_label.setStyleSheet("color: #555; font-size: 10px;")
+        header.addWidget(version_label)
+
         layout.addLayout(header)
 
         # Вкладки
@@ -570,7 +612,7 @@ class NeuroQuantGUI(QMainWindow):
 
         # Кнопки
         btn_layout = QHBoxLayout()
-        self.encode_btn = QPushButton("▶ Кодувати")
+        self.encode_btn = QPushButton("Кодувати")
         self.encode_btn.setMinimumHeight(45)
         self.encode_btn.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
         self.encode_btn.setStyleSheet("""
@@ -667,39 +709,36 @@ class NeuroQuantGUI(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        # Налаштування
-        settings_group = QGroupBox("Налаштування")
-        settings_layout = QHBoxLayout(settings_group)
-
-        settings_layout.addWidget(QLabel("Відео:"))
+        # Приховані поля для сумісності
         self.bench_input = QLineEdit()
-        self.bench_input.setPlaceholderText("Оберіть відео...")
-        settings_layout.addWidget(self.bench_input)
-        bench_btn = QPushButton("...")
-        bench_btn.setMaximumWidth(40)
-        bench_btn.clicked.connect(lambda: self.browse_for_edit(self.bench_input))
-        settings_layout.addWidget(bench_btn)
-
-        settings_layout.addWidget(QLabel("Бітрейт:"))
+        self.bench_input.hide()
         self.bench_bitrate = QComboBox()
         self.bench_bitrate.addItems(["300k", "600k", "1M", "2M"])
-        self.bench_bitrate.setCurrentText("600k")
-        settings_layout.addWidget(self.bench_bitrate)
-
-        self.bench_btn = QPushButton("▶ Порівняти кодеки")
-        self.bench_btn.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
-        self.bench_btn.clicked.connect(self.start_benchmark)
-        settings_layout.addWidget(self.bench_btn)
-
-        layout.addWidget(settings_group)
+        self.bench_bitrate.hide()
 
         # Прогрес
         self.bench_progress = QProgressBar()
         layout.addWidget(self.bench_progress)
-        self.bench_status = QLabel("Оберіть відео і натисніть 'Порівняти кодеки'")
+        self.bench_status = QLabel("Оберіть відео на вкладці 'Кодування' і натисніть 'Кодувати'")
         layout.addWidget(self.bench_status)
 
-        # 4 екрани (2x2)
+        # Таблиця порівняння (5 методів)
+        self.bench_table = QTableWidget(5, 5)
+        self.bench_table.setHorizontalHeaderLabels(["Кодек", "Розмір", "Бітрейт", "PSNR", "SSIM"])
+        self.bench_table.verticalHeader().setVisible(False)
+        self.bench_table.setMaximumHeight(180)
+        self.bench_table.horizontalHeader().setStretchLastSection(True)
+
+        # Заповнюємо назви кодеків
+        codecs = ["H.264 (AVC)", "HEVC (H.265)", "VVC (H.266)", "NeuroQuant", "NeuroQuant + SR"]
+        for i, codec in enumerate(codecs):
+            self.bench_table.setItem(i, 0, QTableWidgetItem(codec))
+            for j in range(1, 5):
+                self.bench_table.setItem(i, j, QTableWidgetItem("—"))
+
+        layout.addWidget(self.bench_table)
+
+        # 4 екрани (2x2) - без SR, SR показуємо тільки в таблиці
         screens_widget = QWidget()
         screens_layout = QVBoxLayout(screens_widget)
 
@@ -710,9 +749,9 @@ class NeuroQuantGUI(QMainWindow):
         h264_group = QGroupBox("H.264 (AVC)")
         h264_layout = QVBoxLayout(h264_group)
         self.bench_video_h264 = QLabel()
-        self.bench_video_h264.setMinimumSize(320, 180)
+        self.bench_video_h264.setMinimumSize(350, 197)
         self.bench_video_h264.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bench_video_h264.setStyleSheet("background-color: #1a1a1a;")
+        self.bench_video_h264.setStyleSheet("background-color: #222;")
         h264_layout.addWidget(self.bench_video_h264)
         self.bench_params_h264 = QLabel("—")
         self.bench_params_h264.setFont(QFont("Consolas", 8))
@@ -723,9 +762,9 @@ class NeuroQuantGUI(QMainWindow):
         hevc_group = QGroupBox("HEVC (H.265)")
         hevc_layout = QVBoxLayout(hevc_group)
         self.bench_video_hevc = QLabel()
-        self.bench_video_hevc.setMinimumSize(320, 180)
+        self.bench_video_hevc.setMinimumSize(350, 197)
         self.bench_video_hevc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bench_video_hevc.setStyleSheet("background-color: #1a1a1a;")
+        self.bench_video_hevc.setStyleSheet("background-color: #222;")
         hevc_layout.addWidget(self.bench_video_hevc)
         self.bench_params_hevc = QLabel("—")
         self.bench_params_hevc.setFont(QFont("Consolas", 8))
@@ -741,9 +780,9 @@ class NeuroQuantGUI(QMainWindow):
         vvc_group = QGroupBox("VVC (H.266)")
         vvc_layout = QVBoxLayout(vvc_group)
         self.bench_video_vvc = QLabel()
-        self.bench_video_vvc.setMinimumSize(320, 180)
+        self.bench_video_vvc.setMinimumSize(350, 197)
         self.bench_video_vvc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bench_video_vvc.setStyleSheet("background-color: #1a1a1a;")
+        self.bench_video_vvc.setStyleSheet("background-color: #222;")
         vvc_layout.addWidget(self.bench_video_vvc)
         self.bench_params_vvc = QLabel("—")
         self.bench_params_vvc.setFont(QFont("Consolas", 8))
@@ -754,12 +793,12 @@ class NeuroQuantGUI(QMainWindow):
         nq_group = QGroupBox("NeuroQuant (HEVC + R-λ)")
         nq_layout = QVBoxLayout(nq_group)
         self.bench_video_nq = QLabel()
-        self.bench_video_nq.setMinimumSize(320, 180)
+        self.bench_video_nq.setMinimumSize(350, 197)
         self.bench_video_nq.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bench_video_nq.setStyleSheet("background-color: #1a1a1a;")
+        self.bench_video_nq.setStyleSheet("background-color: #222;")
         nq_layout.addWidget(self.bench_video_nq)
         self.bench_params_nq = QLabel("—")
-        self.bench_params_nq.setFont(QFont("Consolas", 8))
+        self.bench_params_nq.setFont(QFont("Consolas", 9))
         nq_layout.addWidget(self.bench_params_nq)
         bottom_row.addWidget(nq_group)
 
@@ -783,7 +822,6 @@ class NeuroQuantGUI(QMainWindow):
         # Підсумок
         self.bench_summary = QLabel("—")
         self.bench_summary.setFont(QFont("Consolas", 10))
-        self.bench_summary.setStyleSheet("padding: 10px; background: #2a2a2a; color: #0f0;")
         layout.addWidget(self.bench_summary)
 
         # Дані для відтворення
@@ -982,7 +1020,7 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         self.left_video_label = QLabel()
         self.left_video_label.setMinimumSize(480, 270)
         self.left_video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.left_video_label.setStyleSheet("background-color: #1a1a1a;")
+        self.left_video_label.setStyleSheet("background-color: #222;")
         left_layout.addWidget(self.left_video_label)
 
         self.left_params = QLabel("—")
@@ -996,7 +1034,7 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         self.right_video_label = QLabel()
         self.right_video_label.setMinimumSize(480, 270)
         self.right_video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.right_video_label.setStyleSheet("background-color: #1a1a1a;")
+        self.right_video_label.setStyleSheet("background-color: #222;")
         right_layout.addWidget(self.right_video_label)
 
         self.right_params = QLabel("—")
@@ -1218,31 +1256,40 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         self.sr_threshold.setEnabled(checked)
 
     def start_encode(self):
+        """Запуск кодування всіма 4 кодеками для порівняння."""
         inp = self.input_edit.text()
-        out = self.output_edit.text()
 
         if not inp or not Path(inp).exists():
             QMessageBox.warning(self, "Помилка", "Оберіть вхідний файл")
-            return
-        if not out:
-            QMessageBox.warning(self, "Помилка", "Вкажіть вихідний файл")
             return
 
         self.log_text.clear()
         self.encode_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.progress_bar.setValue(0)
+        self.bench_progress.setValue(0)
 
         bitrate = parse_bitrate(self.bitrate_combo.currentText())
+        output_dir = Path(inp).parent / "benchmark_results"
 
-        self.worker = EncodeWorker(
-            inp, out, bitrate,
-            self.sr_check.isChecked(), self.sr_threshold.value()
-        )
-        self.worker.progress.connect(self.on_progress)
-        self.worker.log.connect(lambda m: self.log_text.append(m))
-        self.worker.finished.connect(self.on_encode_finished)
-        self.worker.start()
+        # Зберігаємо параметри для бенчмарку
+        self.bench_input.setText(inp)
+        self.bench_bitrate.setCurrentText(self.bitrate_combo.currentText())
+
+        # Запускаємо бенчмарк з 5 методами (включно з SR)
+        methods = ['h264', 'hevc', 'vvc', 'nq', 'nq_sr']
+        self.benchmark_worker = BenchmarkWorker(inp, str(output_dir), [bitrate], methods)
+        self.benchmark_worker.progress.connect(self.on_benchmark_progress)
+        self.benchmark_worker.log.connect(lambda m: self.log_text.append(m))
+        self.benchmark_worker.finished.connect(self.on_encode_benchmark_finished)
+        self.benchmark_worker.start()
+
+    def on_benchmark_progress(self, percent: int, msg: str):
+        """Оновлення прогресу на обох вкладках."""
+        self.progress_bar.setValue(percent)
+        self.bench_progress.setValue(percent)
+        self.status_label.setText(msg)
+        self.bench_status.setText(msg)
 
     def on_progress(self, percent: int, msg: str):
         self.progress_bar.setValue(percent)
@@ -1253,6 +1300,10 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
             self.worker.terminate()
             self.worker.wait()
             self.on_encode_finished(False, "Скасовано", {})
+        if self.benchmark_worker and self.benchmark_worker.isRunning():
+            self.benchmark_worker.terminate()
+            self.benchmark_worker.wait()
+            self.on_encode_benchmark_finished(False, "Скасовано", [])
 
     def on_encode_finished(self, ok: bool, msg: str, stats: dict):
         self.encode_btn.setEnabled(True)
@@ -1271,6 +1322,22 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
 
         if ok:
             QMessageBox.information(self, "Готово", msg)
+        else:
+            QMessageBox.critical(self, "Помилка", msg)
+
+    def on_encode_benchmark_finished(self, ok: bool, msg: str, results: List[Dict]):
+        """Обробка завершення бенчмарку з вкладки кодування."""
+        self.encode_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self.status_label.setText(msg)
+        self.bench_status.setText(msg)
+
+        if ok and results:
+            self.benchmark_results = results
+            self.load_benchmark_videos(results)
+
+        if ok:
+            QMessageBox.information(self, "Готово", f"Порівняння завершено. {msg}")
         else:
             QMessageBox.critical(self, "Помилка", msg)
 
@@ -1408,48 +1475,60 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         stem = Path(input_path).stem
 
         method_labels = {
-            'h264': (self.bench_video_h264, self.bench_params_h264),
-            'hevc': (self.bench_video_hevc, self.bench_params_hevc),
-            'vvc': (self.bench_video_vvc, self.bench_params_vvc),
-            'nq': (self.bench_video_nq, self.bench_params_nq),
+            'h264': (self.bench_video_h264, self.bench_params_h264, 0),
+            'hevc': (self.bench_video_hevc, self.bench_params_hevc, 1),
+            'vvc': (self.bench_video_vvc, self.bench_params_vvc, 2),
+            'nq': (self.bench_video_nq, self.bench_params_nq, 3),
+            'nq_sr': (None, None, 4),  # SR тільки в таблиці
         }
 
         best_psnr = 0
         best_method = ""
-        summary_parts = []
 
         for r in results:
             method = r['method']
             if method not in method_labels:
                 continue
 
-            video_label, params_label = method_labels[method]
+            video_label, params_label, table_row = method_labels[method]
             video_path = output_dir / f"{stem}_{method}_{bitrate}.mp4"
 
             if video_path.exists():
-                self.bench_caps[method] = cv2.VideoCapture(str(video_path))
-                self.bench_paths[method] = str(video_path)
+                # Відео екран (якщо є)
+                if video_label is not None:
+                    self.bench_caps[method] = cv2.VideoCapture(str(video_path))
+                    self.bench_paths[method] = str(video_path)
+                    params_label.setText(
+                        f"Розмір: {r['size_mb']:.2f} MB\n"
+                        f"Бітрейт: {format_bitrate(r['actual_bitrate'])}\n"
+                        f"PSNR: {r['psnr']:.2f} dB\n"
+                        f"SSIM: {r['ssim']:.4f}"
+                    )
 
-                params_label.setText(
-                    f"Розмір: {r['size_mb']:.2f} MB\n"
-                    f"Бітрейт: {format_bitrate(r['actual_bitrate'])}\n"
-                    f"PSNR: {r['psnr']:.2f} dB\n"
-                    f"SSIM: {r['ssim']:.4f}"
-                )
+                # Заповнюємо таблицю
+                self.bench_table.setItem(table_row, 1, QTableWidgetItem(f"{r['size_mb']:.2f} MB"))
+                self.bench_table.setItem(table_row, 2, QTableWidgetItem(format_bitrate(r['actual_bitrate'])))
+                self.bench_table.setItem(table_row, 3, QTableWidgetItem(f"{r['psnr']:.2f} dB"))
+                self.bench_table.setItem(table_row, 4, QTableWidgetItem(f"{r['ssim']:.4f}"))
 
                 if r['psnr'] > best_psnr:
                     best_psnr = r['psnr']
-                    best_method = method.upper()
-
-                summary_parts.append(f"{method.upper()}: {r['psnr']:.1f}dB")
+                    best_method = method
             else:
-                params_label.setText("Не вдалося закодувати")
+                if params_label is not None:
+                    params_label.setText("Помилка кодування")
 
-        # Підсумок
+        # Виділяємо найкращий кодек в таблиці
         if best_method:
+            row = method_labels[best_method][2]
+            for col in range(5):
+                item = self.bench_table.item(row, col)
+                if item:
+                    item.setBackground(QColor(200, 255, 200))
+
+            codec_names = {'h264': 'H.264', 'hevc': 'HEVC', 'vvc': 'VVC', 'nq': 'NeuroQuant', 'nq_sr': 'NeuroQuant+SR'}
             self.bench_summary.setText(
-                f"Найкраща якість: {best_method} ({best_psnr:.2f} dB)  |  " +
-                "  |  ".join(summary_parts)
+                f"НАЙКРАЩИЙ: {codec_names.get(best_method, best_method)} — PSNR {best_psnr:.2f} dB"
             )
 
         # Налаштування слайдера
