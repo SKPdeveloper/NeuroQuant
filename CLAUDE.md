@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ВАЖЛИВО: Python версія
+
+**Завжди використовувати `py -3.9` замість `python`!**
+
+```bash
+py -3.9 gui.py              # GUI
+py -3.9 -m neuroquant ...   # CLI
+```
+
 ## Project Overview
 
 **NeuroQuant** — інтелектуальна система аналізу та стиснення відео, що поєднує per-frame rate control на основі R-λ теорії з Real-ESRGAN постпроцесингом. Дипломний проєкт на Python 3.11+.
