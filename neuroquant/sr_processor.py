@@ -308,8 +308,13 @@ class SRPostProcessor:
         temp_dir = get_temp_dir()
         vmaf_log = temp_dir / "vmaf_log.json"
 
-        # Екрануємо шлях для Windows (двокрапка після C: ламає ffmpeg парсер)
-        vmaf_log_escaped = str(vmaf_log).replace("\\", "/").replace(":", "\\:")
+        # Windows: екрануємо шлях для ffmpeg
+        # Двокрапка після літери диска (C:) ламає lavfi парсер
+        vmaf_log_str = str(vmaf_log).replace("\\", "/")
+        if len(vmaf_log_str) >= 2 and vmaf_log_str[1] == ':':
+            vmaf_log_escaped = vmaf_log_str[0] + "\\:" + vmaf_log_str[2:]
+        else:
+            vmaf_log_escaped = vmaf_log_str
 
         cmd = [
             "ffmpeg",

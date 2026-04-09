@@ -200,8 +200,14 @@ class MetricsCollector:
         """
         temp_dir = get_temp_dir()
         vmaf_log = temp_dir / "vmaf_log.json"
-        # Windows: екрануємо шлях для ffmpeg (двокрапка після C: ламає парсер)
-        vmaf_log_escaped = str(vmaf_log).replace("\\", "/").replace(":", "\\:")
+        # Windows: екрануємо шлях для ffmpeg
+        # Двокрапка після літери диска (C:) ламає lavfi парсер, екрануємо тільки її
+        vmaf_log_str = str(vmaf_log).replace("\\", "/")
+        # Екрануємо тільки C: → C\: (перші 2 символи якщо це Windows шлях)
+        if len(vmaf_log_str) >= 2 and vmaf_log_str[1] == ':':
+            vmaf_log_escaped = vmaf_log_str[0] + "\\:" + vmaf_log_str[2:]
+        else:
+            vmaf_log_escaped = vmaf_log_str
 
         log_fmt = "json"  # JSON потрібен для обох випадків (per-frame та aggregated)
         cmd = [
