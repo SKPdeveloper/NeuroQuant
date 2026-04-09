@@ -242,12 +242,21 @@ class BenchmarkWorker(QThread):
                         if method == 'h264':
                             encoder = FFmpegEncoder(codec=Codec.H264)
                             result = encoder.encode(self.input_path, str(output_path), bitrate)
+                            if not result.success:
+                                self.log.emit(f"  ПОМИЛКА: {result.error_message}")
+                                continue
                         elif method == 'hevc':
                             encoder = FFmpegEncoder(codec=Codec.HEVC)
                             result = encoder.encode(self.input_path, str(output_path), bitrate)
+                            if not result.success:
+                                self.log.emit(f"  ПОМИЛКА: {result.error_message}")
+                                continue
                         elif method == 'vvc':
                             encoder = FFmpegEncoder(codec=Codec.VVC)
                             result = encoder.encode(self.input_path, str(output_path), bitrate)
+                            if not result.success:
+                                self.log.emit(f"  ПОМИЛКА: {result.error_message}")
+                                continue
                         elif method == 'nq':
                             # NeuroQuant
                             from neuroquant.analyzer import ComplexityAnalyzer
@@ -268,6 +277,9 @@ class BenchmarkWorker(QThread):
                                 self.input_path, str(output_path), qp_plan,
                                 target_bitrate=bitrate, show_progress=False
                             )
+                            if not result.success:
+                                self.log.emit(f"  ПОМИЛКА: {result.error_message}")
+                                continue
                         elif method == 'nq_sr':
                             # NeuroQuant + Real-ESRGAN SR
                             from neuroquant.analyzer import ComplexityAnalyzer
