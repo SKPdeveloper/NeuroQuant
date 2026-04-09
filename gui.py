@@ -145,7 +145,7 @@ class EncodeWorker(QThread):
                 self.finished.emit(False, f"Помилка: {encode_result.error_message}", {})
                 return
 
-            enc_time = getattr(encode_result, 'encoding_time', 0) or encode_result.duration
+            enc_time = encode_result.encoding_time if encode_result.encoding_time > 0 else encode_result.duration
             self.stats['encoding_time'] = enc_time
             self.log.emit(f"  Тривалість: {encode_result.duration:.1f} сек")
             self.progress.emit(75, "Кодування завершено")
@@ -234,7 +234,7 @@ class BenchmarkWorker(QThread):
                     self.progress.emit(pct, f"{method.upper()} @ {format_bitrate(bitrate)}")
                     self.log.emit(f"\n[{step}/{total_steps}] {method.upper()} @ {format_bitrate(bitrate)}")
 
-                    output_path = Path(self.output_dir) / f"{Path(self.input_path).stem}_{method}_{bitrate}.mp4"
+                    output_path = (Path(self.output_dir) / f"{Path(self.input_path).stem}_{method}_{bitrate}.mp4").resolve()
 
                     try:
                         from neuroquant.encoder import FFmpegEncoder, Codec
@@ -285,7 +285,7 @@ class BenchmarkWorker(QThread):
                             )
 
                             # Спочатку кодуємо
-                            temp_path = Path(self.output_dir) / f"temp_{Path(self.input_path).stem}_{bitrate}.mp4"
+                            temp_path = (Path(self.output_dir) / f"temp_{Path(self.input_path).stem}_{bitrate}.mp4").resolve()
                             encoder = FFmpegEncoder(codec=Codec.HEVC)
                             result = encoder.encode_with_qp_plan(
                                 self.input_path, str(temp_path), qp_plan,
@@ -301,11 +301,16 @@ class BenchmarkWorker(QThread):
                                 )
                                 temp_path.unlink(missing_ok=True)
                                 if not sr_result.success:
-                                    result = sr_result
+                                    self.log.emit(f"  ПОМИЛКА SR: {sr_result.error_message}")
+                                    continue
+                            else:
+                                temp_path.unlink(missing_ok=True)
+                                self.log.emit(f"  ПОМИЛКА кодування: {result.error_message}")
+                                continue
                         else:
                             continue
 
-                        if result.success and output_path.exists():
+                        if output_path.exists():
                             # Обчислення метрик
                             from neuroquant.metrics import calculate_psnr, calculate_ssim
 
@@ -315,6 +320,13 @@ class BenchmarkWorker(QThread):
                             psnr = calculate_psnr(self.input_path, str(output_path))
                             ssim = calculate_ssim(self.input_path, str(output_path))
 
+                            # Отримуємо час кодування (для nq_sr беремо з result)
+                            enc_time = 0.0
+                            if hasattr(result, 'encoding_time') and result.encoding_time > 0:
+                                enc_time = result.encoding_time
+                            elif hasattr(result, 'duration') and result.duration > 0:
+                                enc_time = result.duration
+
                             results.append({
                                 'method': method,
                                 'bitrate': bitrate,
@@ -322,12 +334,12 @@ class BenchmarkWorker(QThread):
                                 'size_mb': out_size / (1024 * 1024),
                                 'psnr': psnr,
                                 'ssim': ssim,
-                                'encoding_time': getattr(result, 'encoding_time', 0) or result.duration
+                                'encoding_time': enc_time
                             })
 
                             self.log.emit(f"  PSNR: {psnr:.2f} dB, SSIM: {ssim:.4f}")
                         else:
-                            self.log.emit(f"  ПОМИЛКА: {result.error_message}")
+                            self.log.emit(f"  ПОМИЛКА: файл не створено")
 
                     except Exception as e:
                         self.log.emit(f"  ПОМИЛКА: {e}")
@@ -722,15 +734,15 @@ class NeuroQuantGUI(QMainWindow):
         self.bench_status = QLabel("Оберіть відео на вкладці 'Кодування' і натисніть 'Кодувати'")
         layout.addWidget(self.bench_status)
 
-        # Таблиця порівняння (5 методів)
-        self.bench_table = QTableWidget(5, 5)
+        # Таблиця порівняння (4 методи)
+        self.bench_table = QTableWidget(4, 5)
         self.bench_table.setHorizontalHeaderLabels(["Кодек", "Розмір", "Бітрейт", "PSNR", "SSIM"])
         self.bench_table.verticalHeader().setVisible(False)
-        self.bench_table.setMaximumHeight(180)
+        self.bench_table.setMaximumHeight(160)
         self.bench_table.horizontalHeader().setStretchLastSection(True)
 
         # Заповнюємо назви кодеків
-        codecs = ["H.264 (AVC)", "HEVC (H.265)", "VVC (H.266)", "NeuroQuant", "NeuroQuant + SR"]
+        codecs = ["H.264 (AVC)", "HEVC (H.265)", "NeuroQuant", "NeuroQuant + SR"]
         for i, codec in enumerate(codecs):
             self.bench_table.setItem(i, 0, QTableWidgetItem(codec))
             for j in range(1, 5):
@@ -776,8 +788,8 @@ class NeuroQuantGUI(QMainWindow):
         # Нижній ряд: VVC | NeuroQuant
         bottom_row = QHBoxLayout()
 
-        # VVC
-        vvc_group = QGroupBox("VVC (H.266)")
+        # NeuroQuant
+        vvc_group = QGroupBox("NeuroQuant (HEVC + R-λ)")
         vvc_layout = QVBoxLayout(vvc_group)
         self.bench_video_vvc = QLabel()
         self.bench_video_vvc.setMinimumSize(350, 197)
@@ -789,8 +801,8 @@ class NeuroQuantGUI(QMainWindow):
         vvc_layout.addWidget(self.bench_params_vvc)
         bottom_row.addWidget(vvc_group)
 
-        # NeuroQuant
-        nq_group = QGroupBox("NeuroQuant (HEVC + R-λ)")
+        # NeuroQuant + SR
+        nq_group = QGroupBox("NeuroQuant + Real-ESRGAN")
         nq_layout = QVBoxLayout(nq_group)
         self.bench_video_nq = QLabel()
         self.bench_video_nq.setMinimumSize(350, 197)
@@ -1256,11 +1268,16 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         self.sr_threshold.setEnabled(checked)
 
     def start_encode(self):
-        """Запуск кодування всіма 4 кодеками для порівняння."""
+        """Запуск основного кодування + бенчмарк паралельно."""
         inp = self.input_edit.text()
+        out = self.output_edit.text()
 
         if not inp or not Path(inp).exists():
             QMessageBox.warning(self, "Помилка", "Оберіть вхідний файл")
+            return
+
+        if not out:
+            QMessageBox.warning(self, "Помилка", "Вкажіть вихідний файл")
             return
 
         self.log_text.clear()
@@ -1270,18 +1287,26 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         self.bench_progress.setValue(0)
 
         bitrate = parse_bitrate(self.bitrate_combo.currentText())
-        output_dir = Path(inp).parent / "benchmark_results"
+        use_sr = self.sr_check.isChecked()
+        sr_threshold = self.sr_threshold.value()
 
-        # Зберігаємо параметри для бенчмарку
+        # 1. Основне кодування NeuroQuant → вказаний вихід
+        self.worker = EncodeWorker(inp, out, bitrate, use_sr, sr_threshold)
+        self.worker.progress.connect(self.on_progress)
+        self.worker.log.connect(lambda m: self.log_text.append(m))
+        self.worker.finished.connect(self.on_encode_finished)
+        self.worker.start()
+
+        # 2. Паралельний бенчмарк для порівняння кодеків
+        output_dir = Path(inp).parent / "benchmark_results"
         self.bench_input.setText(inp)
         self.bench_bitrate.setCurrentText(self.bitrate_combo.currentText())
 
-        # Запускаємо бенчмарк з 5 методами (включно з SR)
-        methods = ['h264', 'hevc', 'vvc', 'nq', 'nq_sr']
+        methods = ['h264', 'hevc', 'nq', 'nq_sr']
         self.benchmark_worker = BenchmarkWorker(inp, str(output_dir), [bitrate], methods)
         self.benchmark_worker.progress.connect(self.on_benchmark_progress)
-        self.benchmark_worker.log.connect(lambda m: self.log_text.append(m))
-        self.benchmark_worker.finished.connect(self.on_encode_benchmark_finished)
+        self.benchmark_worker.log.connect(lambda m: self.log_text.append(f"[Bench] {m}"))
+        self.benchmark_worker.finished.connect(self.on_benchmark_finished)
         self.benchmark_worker.start()
 
     def on_benchmark_progress(self, percent: int, msg: str):
@@ -1303,7 +1328,7 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         if self.benchmark_worker and self.benchmark_worker.isRunning():
             self.benchmark_worker.terminate()
             self.benchmark_worker.wait()
-            self.on_encode_benchmark_finished(False, "Скасовано", [])
+            self.on_benchmark_finished(False, "Скасовано", [])
 
     def on_encode_finished(self, ok: bool, msg: str, stats: dict):
         self.encode_btn.setEnabled(True)
@@ -1423,36 +1448,7 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
 
         return "\n".join(conclusions) if conclusions else "Немає даних для аналізу"
 
-        # Переключитись на вкладку аналізу
-        self.tabs.setCurrentIndex(1)
-
-    def start_benchmark(self):
-        inp = self.bench_input.text()
-        if not inp or not Path(inp).exists():
-            QMessageBox.warning(self, "Помилка", "Оберіть тестове відео")
-            return
-
-        bitrate = parse_bitrate(self.bench_bitrate.currentText())
-        output_dir = Path(inp).parent / "benchmark_results"
-        output_dir.mkdir(exist_ok=True)
-
-        self.bench_btn.setEnabled(False)
-        self.bench_progress.setValue(0)
-        self.bench_status.setText("Кодування 4 методами...")
-
-        # Запускаємо кодування всіма методами
-        methods = ['h264', 'hevc', 'vvc', 'nq']
-        self.benchmark_worker = BenchmarkWorker(inp, str(output_dir), [bitrate], methods)
-        self.benchmark_worker.progress.connect(lambda p, m: (
-            self.bench_progress.setValue(p),
-            self.bench_status.setText(m)
-        ))
-        self.benchmark_worker.log.connect(lambda m: self.log_text.append(m))
-        self.benchmark_worker.finished.connect(self.on_benchmark_finished)
-        self.benchmark_worker.start()
-
     def on_benchmark_finished(self, ok: bool, msg: str, results: List[Dict]):
-        self.bench_btn.setEnabled(True)
         self.bench_status.setText(msg)
 
         if ok and results:
@@ -1477,9 +1473,8 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         method_labels = {
             'h264': (self.bench_video_h264, self.bench_params_h264, 0),
             'hevc': (self.bench_video_hevc, self.bench_params_hevc, 1),
-            'vvc': (self.bench_video_vvc, self.bench_params_vvc, 2),
-            'nq': (self.bench_video_nq, self.bench_params_nq, 3),
-            'nq_sr': (None, None, 4),  # SR тільки в таблиці
+            'nq': (self.bench_video_vvc, self.bench_params_vvc, 2),  # NQ на місці VVC
+            'nq_sr': (self.bench_video_nq, self.bench_params_nq, 3),  # NQ+SR на місці NQ
         }
 
         best_psnr = 0
@@ -1545,8 +1540,8 @@ py -3.9 -m neuroquant benchmark ./videos -m h264,hevc,nq -b 300k,600k,1M
         method_labels = {
             'h264': self.bench_video_h264,
             'hevc': self.bench_video_hevc,
-            'vvc': self.bench_video_vvc,
-            'nq': self.bench_video_nq,
+            'nq': self.bench_video_vvc,      # NQ на 3-му екрані
+            'nq_sr': self.bench_video_nq,    # NQ+SR на 4-му екрані
         }
 
         for method, cap in self.bench_caps.items():

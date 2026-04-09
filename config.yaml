@@ -37,7 +37,7 @@ encoder:
 # SR постпроцесинг
 sr:
   # Поріг активації (VMAF)
-  vmaf_threshold: 70
+  vmaf_threshold: 70.0
 
   # Модель за замовчуванням
   model: RealESRNet_x2plus

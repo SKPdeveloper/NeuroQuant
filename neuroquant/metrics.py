@@ -126,66 +126,63 @@ class MetricsCollector:
         reference_path: str,
     ) -> Tuple[float, float, float, float]:
         """
-        Обчислює PSNR та SSIM через ffmpeg.
+        Обчислює PSNR та SSIM через OpenCV (надійніше ніж парсинг ffmpeg).
 
         Returns:
             (psnr_mean, psnr_std, ssim_mean, ssim_std)
         """
-        temp_dir = get_temp_dir()
-        psnr_log = temp_dir / "psnr_log.txt"
-        ssim_log = temp_dir / "ssim_log.txt"
+        import cv2
+        from skimage.metrics import structural_similarity as ssim_func
 
-        # PSNR
-        cmd_psnr = [
-            "ffmpeg",
-            "-i", distorted_path,
-            "-i", reference_path,
-            "-lavfi", f"psnr=stats_file={psnr_log}",
-            "-f", "null",
-            "NUL" if os.name == "nt" else "/dev/null",
-        ]
+        cap_dist = cv2.VideoCapture(distorted_path)
+        cap_ref = cv2.VideoCapture(reference_path)
 
-        result = subprocess.run(cmd_psnr, capture_output=True, text=True)
+        psnr_values = []
+        ssim_values = []
 
-        psnr_mean, psnr_std = 0.0, 0.0
-        # Парсимо вивід ffmpeg для середнього PSNR
-        for line in result.stderr.split("\n"):
-            if "average:" in line.lower():
-                parts = line.split()
-                for i, p in enumerate(parts):
-                    if p.lower().startswith("average:"):
-                        try:
-                            psnr_mean = float(parts[i].split(":")[1])
-                        except (ValueError, IndexError):
-                            pass
-            if "PSNR" in line and "average" in line:
-                try:
-                    # Формат: [Parsed_psnr_0 @ ...] PSNR y:XX.XX u:XX.XX v:XX.XX average:XX.XX
-                    if "average:" in line:
-                        psnr_mean = float(line.split("average:")[1].split()[0])
-                except (ValueError, IndexError):
-                    pass
+        frame_count = 0
+        max_frames = 100  # Обмежуємо для швидкості
 
-        # SSIM
-        cmd_ssim = [
-            "ffmpeg",
-            "-i", distorted_path,
-            "-i", reference_path,
-            "-lavfi", f"ssim=stats_file={ssim_log}",
-            "-f", "null",
-            "NUL" if os.name == "nt" else "/dev/null",
-        ]
+        while frame_count < max_frames:
+            ret_dist, frame_dist = cap_dist.read()
+            ret_ref, frame_ref = cap_ref.read()
 
-        result = subprocess.run(cmd_ssim, capture_output=True, text=True)
+            if not ret_dist or not ret_ref:
+                break
 
-        ssim_mean, ssim_std = 0.0, 0.0
-        for line in result.stderr.split("\n"):
-            if "All:" in line:
-                try:
-                    # Формат: [Parsed_ssim_0 @ ...] SSIM Y:X.XXX ... All:X.XXX
-                    ssim_mean = float(line.split("All:")[1].split()[0])
-                except (ValueError, IndexError):
-                    pass
+            # Конвертуємо в grayscale
+            gray_dist = cv2.cvtColor(frame_dist, cv2.COLOR_BGR2GRAY)
+            gray_ref = cv2.cvtColor(frame_ref, cv2.COLOR_BGR2GRAY)
+
+            # Якщо розміри різні — масштабуємо
+            if gray_dist.shape != gray_ref.shape:
+                gray_dist = cv2.resize(gray_dist, (gray_ref.shape[1], gray_ref.shape[0]))
+
+            # PSNR
+            mse = np.mean((gray_ref.astype(float) - gray_dist.astype(float)) ** 2)
+            if mse > 0:
+                psnr = 10 * np.log10(255.0 ** 2 / mse)
+            else:
+                psnr = 100.0  # Ідентичні кадри
+            psnr_values.append(psnr)
+
+            # SSIM
+            ssim_val = ssim_func(gray_ref, gray_dist)
+            ssim_values.append(ssim_val)
+
+            frame_count += 1
+
+        cap_dist.release()
+        cap_ref.release()
+
+        if psnr_values:
+            psnr_mean = np.mean(psnr_values)
+            psnr_std = np.std(psnr_values)
+            ssim_mean = np.mean(ssim_values)
+            ssim_std = np.std(ssim_values)
+        else:
+            psnr_mean, psnr_std = 0.0, 0.0
+            ssim_mean, ssim_std = 0.0, 0.0
 
         return psnr_mean, psnr_std, ssim_mean, ssim_std
 
@@ -203,13 +200,15 @@ class MetricsCollector:
         """
         temp_dir = get_temp_dir()
         vmaf_log = temp_dir / "vmaf_log.json"
+        # Windows: екрануємо шлях для ffmpeg (двокрапка після C: ламає парсер)
+        vmaf_log_escaped = str(vmaf_log).replace("\\", "/").replace(":", "\\:")
 
         log_fmt = "json"  # JSON потрібен для обох випадків (per-frame та aggregated)
         cmd = [
             "ffmpeg",
             "-i", distorted_path,
             "-i", reference_path,
-            "-lavfi", f"libvmaf=log_path={vmaf_log}:log_fmt={log_fmt}:n_threads={self.n_threads}",
+            "-lavfi", f"libvmaf=log_path={vmaf_log_escaped}:log_fmt={log_fmt}:n_threads={self.n_threads}",
             "-f", "null",
             "NUL" if os.name == "nt" else "/dev/null",
         ]

@@ -93,7 +93,8 @@ class SRPostProcessor:
                 )
 
             # Завантажуємо модель через spandrel
-            self.model = spandrel.ModelLoader().load_from_file(model_path)
+            model_descriptor = spandrel.ModelLoader().load_from_file(model_path)
+            self.model = model_descriptor.model
             self.model = self.model.to(self.device)
             if self.device == "cuda":
                 self.model = self.model.half()
@@ -307,8 +308,8 @@ class SRPostProcessor:
         temp_dir = get_temp_dir()
         vmaf_log = temp_dir / "vmaf_log.json"
 
-        # Екрануємо шлях для Windows (замінюємо \ на / або \\)
-        vmaf_log_escaped = str(vmaf_log).replace("\\", "/")
+        # Екрануємо шлях для Windows (двокрапка після C: ламає ffmpeg парсер)
+        vmaf_log_escaped = str(vmaf_log).replace("\\", "/").replace(":", "\\:")
 
         cmd = [
             "ffmpeg",
