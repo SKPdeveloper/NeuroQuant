@@ -63,10 +63,14 @@ py -3.9 gui.py
 
 | Компонент | Мінімум | Рекомендовано |
 |-----------|---------|---------------|
-| Python | 3.9 | 3.9-3.11 |
+| Python | **3.9** | 3.9-3.11 |
 | FFmpeg | 5.0+ з libx265, libvvenc | gyan.dev full build |
 | GPU | — | NVIDIA RTX (для SR) |
 | RAM | 8 GB | 16 GB |
+
+> **⚠️ ВАЖЛИВО:** PyTorch з CUDA працює лише на Python 3.9-3.11. На Python 3.12+ torch не встановиться або не працюватиме!
+>
+> Завжди використовуйте `py -3.9` замість `python`.
 
 ### FFmpeg
 
@@ -83,7 +87,9 @@ py -3.9 gui.py
 ```bash
 git clone https://github.com/SKPdeveloper/NeuroQuant.git
 cd NeuroQuant
-pip install -r requirements.txt
+
+# ВАЖЛИВО: використовуйте Python 3.9!
+py -3.9 -m pip install -r requirements.txt
 ```
 
 ## R-λ модель (NeuroQuant)
